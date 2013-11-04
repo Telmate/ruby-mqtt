@@ -12,6 +12,8 @@ class MQTT::Client
   attr_accessor :will_payload  # Contents of message that is sent by broker when client disconnect
   attr_accessor :will_qos      # The QoS level of the will message sent by the broker
   attr_accessor :will_retain   # If the Will message should be retain by the broker after it is sent
+  attr_accessor :use_ssl
+  attr_accessor :ssl_options
 
   # OLD deprecated clean_start
   alias :clean_start :clean_session
@@ -33,7 +35,9 @@ class MQTT::Client
     :will_topic => nil,
     :will_payload => nil,
     :will_qos => 0,
-    :will_retain => false
+    :will_retain => false,
+    :use_ssl => false,
+    :ssl_options => {}
   }
 
   # Create and connect a new MQTT Client
@@ -124,7 +128,20 @@ class MQTT::Client
 
     if not connected?
       # Create network socket
-      @socket = TCPSocket.new(@remote_host,@remote_port)
+      sock = TCPSocket.new(@remote_host,@remote_port)
+      if @use_ssl        
+        ctx = OpenSSL::SSL::SSLContext.new
+        ctx.ca_file      = @ssl_options[:ca_file_path]
+        ctx.cert         = OpenSSL::X509::Certificate.new(File.read(@ssl_options[:crt_file_path]))
+        ctx.key          = OpenSSL::PKey::RSA.new(File.read(@ssl_options[:key_file_path]))
+        ctx.verify_mode  = OpenSSL::SSL::VERIFY_PEER
+        @socket = OpenSSL::SSL::SSLSocket.new(sock, ctx).tap do |socket|
+          socket.sync_close = true
+          socket.connect
+        end
+      else
+        @socket = sock
+      end
 
       # Protocol name and version
       packet = MQTT::Packet::Connect.new(
