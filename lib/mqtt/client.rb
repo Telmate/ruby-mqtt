@@ -131,7 +131,7 @@ class MQTT::Client
       sock = TCPSocket.new(@remote_host,@remote_port)
       if @use_ssl        
         ctx = OpenSSL::SSL::SSLContext.new
-        ctx.ca_file      = @ssl_options[:ca_file_path]
+        ctx.ca_file      = @ca_file_path
         # ctx.cert         = OpenSSL::X509::Certificate.new(File.read(@ssl_options[:crt_file_path]))
         # ctx.key          = OpenSSL::PKey::RSA.new(File.read(@ssl_options[:key_file_path]))
         ctx.verify_mode  = OpenSSL::SSL::VERIFY_PEER
