@@ -372,7 +372,7 @@ private
 
     # Only allow one thread to write to socket at a time
     @write_semaphore.synchronize do
-      @socket.write(data)
+      @socket.write(data.to_s)
     end
   end
 
