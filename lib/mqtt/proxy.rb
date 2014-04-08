@@ -1,11 +1,21 @@
 # Class for implementing a proxy to filter/mangle MQTT packets.
 class MQTT::Proxy
+  # Address to bind listening socket to
   attr_reader :local_host
+
+  # Port to bind listening socket to
   attr_reader :local_port
+  
+  # Address of upstream broker to send packets upstream to
   attr_reader :broker_host
+  
+  # Port of upstream broker to send packets upstream to.
   attr_reader :broker_port
-  attr_reader :listen_queue
+
+  # Time in seconds before disconnecting an idle connection
   attr_reader :select_timeout
+  
+  # Ruby Logger object to send informational messages to
   attr_reader :logger
 
   # Create a new MQTT Proxy instance.
@@ -23,7 +33,7 @@ class MQTT::Proxy
   def initialize(args={})
     @local_host = args[:local_host] || '0.0.0.0'
     @local_port = args[:local_port] || MQTT::DEFAULT_PORT
-    @broker_host = args[:broker_host] || MQTT::DEFAULT_HOST
+    @broker_host = args[:broker_host]
     @broker_port = args[:broker_port] || 18830
     @select_timeout = args[:select_timeout] || 60
 

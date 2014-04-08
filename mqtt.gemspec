@@ -9,20 +9,30 @@ Gem::Specification.new do |gem|
   gem.author      = 'Nicholas J Humfrey'
   gem.email       = 'njh@aelius.com'
   gem.homepage    = 'http://github.com/njh/ruby-mqtt'
-  gem.summary     = 'Implementation of the MQTT (Message Queue Telemetry Transport) protocol'
-  gem.description = 'Pure Ruby gem that implements the MQTT (Message Queue Telemetry Transport) protocol, a lightweight protocol for publish/subscribe messaging.'
+  gem.summary     = 'Implementation of the MQTT protocol'
+  gem.description = 'Pure Ruby gem that implements the MQTT protocol, a lightweight protocol for publish/subscribe messaging.'
   gem.license     = 'MIT' if gem.respond_to?(:license=)
 
   gem.rubyforge_project = 'mqtt'
 
-  gem.files         = %w(README LICENSE NEWS) + Dir.glob('lib/**/*.rb')
+  gem.files         = %w(README.md LICENSE.md NEWS.md) + Dir.glob('lib/**/*.rb')
   gem.test_files    = Dir.glob('spec/*_spec.rb')
   gem.executables   = %w()
   gem.require_paths = %w(lib)
 
-  gem.add_development_dependency 'bundler',     '>= 1.0.14'
-  gem.add_development_dependency 'yard',        '>= 0.7.2'
-  gem.add_development_dependency 'rake',        '>= 0.8.7'
-  gem.add_development_dependency 'rspec',       '>= 2.6.0'
-  gem.add_development_dependency 'simplecov'
+  if Gem.ruby_version > Gem::Version.new('1.9')
+    gem.add_development_dependency 'bundler',  '>= 1.5.0'
+    gem.add_development_dependency 'rake',     '>= 0.10.0'
+    gem.add_development_dependency 'yard',     '>= 0.8.0'
+    gem.add_development_dependency 'rspec',    '>= 2.6.0'
+    gem.add_development_dependency 'simplecov'
+  elsif Gem.ruby_version > Gem::Version.new('1.8')
+    gem.add_development_dependency 'bundler',  '>= 1.1.0'
+    gem.add_development_dependency 'rake',     '~> 0.9.0'
+    gem.add_development_dependency 'yard',     '>= 0.8.0'
+    gem.add_development_dependency 'rspec',    '>= 2.6.0'
+  else
+    raise "#{Gem.ruby_version} is an unsupported version of ruby"
+  end
+
 end
