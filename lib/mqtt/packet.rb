@@ -47,7 +47,8 @@ module MQTT
       packet.instance_variable_set('@body_length', body_length)
 
       # Read in the packet body
-      packet.parse_body( socket.read(body_length) )
+      # Jruby doesn't like socket.read(0)
+      packet.parse_body( body_length > 0 ? socket.read(body_length) : "")
 
       return packet
     end
