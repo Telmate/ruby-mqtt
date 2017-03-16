@@ -195,7 +195,7 @@ module MQTT
       # Build up the body length field bytes
       begin
         digit = (body_length % 128)
-        body_length = (body_length / 128)
+        body_length = body_length.div(128)
         # if there are more digits to encode, set the top bit of this digit
         digit |= 0x80 if (body_length > 0)
         header.push(digit)
@@ -369,7 +369,7 @@ module MQTT
         end
         body += encode_string(@topic)
         body += encode_short(@id) unless qos == 0
-        body += payload.to_s.force_encoding('ASCII-8BIT')
+        body += payload.to_s.dup.force_encoding('ASCII-8BIT')
         return body
       end
 
@@ -781,9 +781,9 @@ module MQTT
 
       # Set one or more topic filters for the Subscribe packet
       # The topics parameter should be one of the following:
-      # * String: subscribe to one topic with QOS 0
-      # * Array: subscribe to multiple topics with QOS 0
-      # * Hash: subscribe to multiple topics where the key is the topic and the value is the QOS level
+      # * String: subscribe to one topic with QoS 0
+      # * Array: subscribe to multiple topics with QoS 0
+      # * Hash: subscribe to multiple topics where the key is the topic and the value is the QoS level
       #
       # For example:
       #   packet.topics = 'a/b'
@@ -878,7 +878,7 @@ module MQTT
         super(ATTR_DEFAULTS.merge(args))
       end
 
-      # Set the granted QOS value for each of the topics that were subscribed to
+      # Set the granted QoS value for each of the topics that were subscribed to
       # Can either be an integer or an array or integers.
       def return_codes=(value)
         if value.is_a?(Array)
@@ -893,7 +893,7 @@ module MQTT
       # Get serialisation of packet's body
       def encode_body
         if @return_codes.empty?
-          raise "no granted QOS given when serialising packet"
+          raise "no granted QoS given when serialising packet"
         end
         body = encode_short(@id)
         return_codes.each { |qos| body += encode_bytes(qos) }

@@ -9,7 +9,8 @@ describe "a client talking to a server" do
   before(:each) do
     @error_log = StringIO.new
     @server = MQTT::FakeServer.new
-    @server.just_one = true
+    @server.just_one_connection = true
+    @server.respond_to_pings = true
     @server.logger = Logger.new(@error_log)
     @server.logger.level = Logger::WARN
     @server.start
@@ -23,9 +24,13 @@ describe "a client talking to a server" do
   end
 
   context "connecting and publishing a packet" do
-    def connect_and_publish
+    def connect_and_publish(options = {})
       @client.connect
-      @client.publish('test', 'foobar')
+
+      retain = options.fetch(:retain) { false }
+      qos = options.fetch(:qos) { 0 }
+
+      @client.publish('test', 'foobar', retain, qos)
       @client.disconnect
       @server.thread.join(1)
     end
@@ -48,6 +53,13 @@ describe "a client talking to a server" do
     it "the server should not report any errors" do
       connect_and_publish
       expect(@error_log.string).to be_empty
+    end
+
+    context "with qos > 0" do
+      it "the server should have received a packet without timeout" do
+        connect_and_publish(:qos => 1)
+        expect(@server.last_publish).not_to be_nil
+      end
     end
   end
 
@@ -138,6 +150,26 @@ describe "a client talking to a server" do
       it "the server should not report any errors" do
         connect_and_ping(0)
         expect(@error_log.string).to be_empty
+      end
+    end
+  end
+
+  context "detects server not sending ping responses" do
+    def connect_and_timeout(keep_alive)
+      @server.respond_to_pings = false
+      @client.keep_alive = keep_alive
+      @client.connect
+      sleep(keep_alive * 3)
+    end
+
+    context "when keep-alive=1" do
+      it "the server should have received at least one ping" do
+        expect {
+          connect_and_timeout(1)
+        }.to raise_error(
+          MQTT::ProtocolException,
+          'No Ping Response received for 2 seconds'
+        )
       end
     end
   end

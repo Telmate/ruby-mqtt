@@ -10,7 +10,7 @@ class MQTT::Client
   # Port number of the remote server
   attr_accessor :port
 
-  # The version number of the MQTT protocol to use (default 3.1.0)
+  # The version number of the MQTT protocol to use (default 3.1.1)
   attr_accessor :version
 
   # Set to true to enable SSL/TLS encrypted communication
@@ -53,7 +53,7 @@ class MQTT::Client
   # If the Will message should be retain by the server after it is sent
   attr_accessor :will_retain
 
-  #Last ping response time
+  # Last ping response time
   attr_reader :last_ping_response
 
 
@@ -64,7 +64,7 @@ class MQTT::Client
   ATTR_DEFAULTS = {
     :host => nil,
     :port => nil,
-    :version => '3.1.0',
+    :version => '3.1.1',
     :keep_alive => 15,
     :clean_session => true,
     :client_id => nil,
@@ -174,13 +174,14 @@ class MQTT::Client
     end
 
     # Initialise private instance variables
-    @packet_id = 0
-    @last_pingreq = Time.now
+    @last_ping_request = Time.now
     @last_ping_response = Time.now
     @socket = nil
     @read_queue = Queue.new
+    @pubacks = {}
     @read_thread = nil
     @write_semaphore = Mutex.new
+    @pubacks_semaphore = Mutex.new
   end
 
   # Get the OpenSSL context, that is used if SSL/TLS is enabled
@@ -190,12 +191,24 @@ class MQTT::Client
 
   # Set a path to a file containing a PEM-format client certificate
   def cert_file=(path)
-    ssl_context.cert = OpenSSL::X509::Certificate.new(File.open(path))
+    self.cert = File.read(path)
+  end
+
+  # PEM-format client certificate
+  def cert=(cert)
+    ssl_context.cert = OpenSSL::X509::Certificate.new(cert)
   end
 
   # Set a path to a file containing a PEM-format client private key
-  def key_file=(path)
-    ssl_context.key = OpenSSL::PKey::RSA.new(File.open(path))
+  def key_file=(*args)
+    path, passphrase = args.flatten
+    ssl_context.key = OpenSSL::PKey::RSA.new(File.open(path), passphrase)
+  end
+
+  # Set to a PEM-format client private key
+  def key=(*args)
+    cert, passphrase = args.flatten
+    ssl_context.key = OpenSSL::PKey::RSA.new(cert, passphrase)
   end
 
   # Set a path to a file containing a PEM-format CA certificate and enable peer verification
@@ -287,8 +300,11 @@ class MQTT::Client
 
     # If a block is given, then yield and disconnect
     if block_given?
-      yield(self)
-      disconnect
+      begin
+        yield(self)
+      ensure
+        disconnect
+      end
     end
   end
 
@@ -315,23 +331,13 @@ class MQTT::Client
     (not @socket.nil?) and (not @socket.closed?)
   end
 
-  # Send a MQTT ping message to indicate that the MQTT client is alive.
-  #
-  # Note that you will not normally need to call this method
-  # as it is called automatically
-  def ping
-    packet = MQTT::Packet::Pingreq.new
-    send_packet(packet)
-    @last_pingreq = Time.now
-  end
-
   # Publish a message on a particular topic to the MQTT server.
   def publish(topic, payload='', retain=false, qos=0)
     raise ArgumentError.new("Topic name cannot be nil") if topic.nil?
     raise ArgumentError.new("Topic name cannot be empty") if topic.empty?
 
     packet = MQTT::Packet::Publish.new(
-      :id => @packet_id.next,
+      :id => next_packet_id,
       :qos => qos,
       :retain => retain,
       :topic => topic,
@@ -339,14 +345,28 @@ class MQTT::Client
     )
 
     # Send the packet
-    send_packet(packet)
+    res = send_packet(packet)
+
+    if packet.qos > 0
+      Timeout.timeout(@ack_timeout) do
+        while connected? do
+          @pubacks_semaphore.synchronize do
+            return res if @pubacks.delete(packet.id)
+          end
+          # FIXME: make threads communicate with each other, instead of polling
+          # (using a pipe and select ?)
+          sleep 0.01
+        end
+      end
+      return -1
+    end
   end
 
   # Send a subscribe message for one or more topics on the MQTT server.
   # The topics parameter should be one of the following:
-  # * String: subscribe to one topic with QOS 0
-  # * Array: subscribe to multiple topics with QOS 0
-  # * Hash: subscribe to multiple topics where the key is the topic and the value is the QOS level
+  # * String: subscribe to one topic with QoS 0
+  # * Array: subscribe to multiple topics with QoS 0
+  # * Hash: subscribe to multiple topics where the key is the topic and the value is the QoS level
   #
   # For example:
   #   client.subscribe( 'a/b' )
@@ -356,7 +376,7 @@ class MQTT::Client
   #
   def subscribe(*topics)
     packet = MQTT::Packet::Subscribe.new(
-      :id => @packet_id.next,
+      :id => next_packet_id,
       :topics => topics
     )
     send_packet(packet)
@@ -373,20 +393,17 @@ class MQTT::Client
   #     # Do stuff here
   #   end
   #
-  def get(topic=nil)
-    # Subscribe to a topic, if an argument is given
-    subscribe(topic) unless topic.nil?
-
+  def get(topic=nil, options={})
     if block_given?
-      # Loop forever!
-      loop do
-        packet = @read_queue.pop
-        yield(packet.topic, packet.payload)
+      get_packet(topic) do |packet|
+        yield(packet.topic, packet.payload) unless packet.retain && options[:omit_retained]
       end
     else
-      # Wait for one packet to be available
-      packet = @read_queue.pop
-      return packet.topic, packet.payload
+      loop do
+        # Wait for one packet to be available
+        packet = get_packet(topic)
+        return packet.topic, packet.payload unless packet.retain && options[:omit_retained]
+      end
     end
   end
 
@@ -410,11 +427,15 @@ class MQTT::Client
     if block_given?
       # Loop forever!
       loop do
-        yield(@read_queue.pop)
+        packet = @read_queue.pop
+        yield(packet)
+        puback_packet(packet) if packet.qos > 0
       end
     else
       # Wait for one packet to be available
-      return @read_queue.pop
+      packet = @read_queue.pop
+      puback_packet(packet) if packet.qos > 0
+      return packet
     end
   end
 
@@ -436,7 +457,7 @@ class MQTT::Client
 
     packet = MQTT::Packet::Unsubscribe.new(
       :topics => topics,
-      :id => @packet_id.next
+      :id => next_packet_id
     )
     send_packet(packet)
   end
@@ -452,25 +473,9 @@ private
       unless result.nil?
         # Yes - read in the packet
         packet = MQTT::Packet.read(@socket)
-        if packet.class == MQTT::Packet::Publish
-          # Add to queue
-          @read_queue.push(packet)
-        elsif packet.class == MQTT::Packet::Pingresp
-          @last_ping_response = Time.now
-        else
-          # Ignore all other packets
-          nil
-          # FIXME: implement responses for QOS 1 and 2
-        end
+        handle_packet packet
       end
-
-      # Time to send a keep-alive ping request?
-      if @keep_alive > 0 and Time.now > @last_pingreq + @keep_alive
-        ping
-      end
-
-      # FIXME: check we received a ping response recently?
-
+      keep_alive!
     # Pass exceptions up to parent thread
     rescue Exception => exp
       unless @socket.nil?
@@ -479,6 +484,40 @@ private
       end
       Thread.current[:parent].raise(exp)
     end
+  end
+
+  def handle_packet(packet)
+    if packet.class == MQTT::Packet::Publish
+      # Add to queue
+      @read_queue.push(packet)
+    elsif packet.class == MQTT::Packet::Pingresp
+      @last_ping_response = Time.now
+    elsif packet.class == MQTT::Packet::Puback
+      @pubacks_semaphore.synchronize do
+        @pubacks[packet.id] = packet
+      end
+    end
+    # Ignore all other packets
+    # FIXME: implement responses for QoS  2
+  end
+
+  def keep_alive!
+    if @keep_alive > 0 && connected?
+      response_timeout = (@keep_alive * 1.5).ceil
+      if Time.now >= @last_ping_request + @keep_alive
+        packet = MQTT::Packet::Pingreq.new
+        send_packet(packet)
+        @last_ping_request = Time.now
+      elsif Time.now > @last_ping_response + response_timeout
+        raise MQTT::ProtocolException.new(
+          "No Ping Response received for #{response_timeout} seconds"
+        )
+      end
+    end
+  end
+
+  def puback_packet(packet)
+    send_packet(MQTT::Packet::Puback.new :id => packet.id)
   end
 
   # Read and check a connection acknowledgement packet
@@ -503,7 +542,7 @@ private
 
   # Send a packet to server
   def send_packet(data)
-    # Throw exception if we aren't connected
+    # Raise exception if we aren't connected
     raise MQTT::NotConnectedException if not connected?
 
     # Only allow one thread to write to socket at a time
@@ -532,6 +571,9 @@ private
     }
   end
 
+  def next_packet_id
+    @last_packet_id = ( @last_packet_id || 0 ).next
+  end
 
   # ---- Deprecated attributes and methods  ---- #
   public
