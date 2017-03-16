@@ -1,6 +1,6 @@
 #!/usr/bin/env ruby
 #
-# Connect to a MQTT broker using SSL/TLS Client Certificate,
+# Connect to a MQTT server using SSL/TLS Client Certificate,
 # send a single message and then receive it back
 #
 
@@ -25,7 +25,7 @@ client.connect do
 
   # Send a message
   client.publish('test', "hello world")
-  
+
   # If you pass a block to the get method, then it will loop
   topic, message = client.get
   p [topic, message]
