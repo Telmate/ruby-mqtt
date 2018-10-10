@@ -15,7 +15,8 @@ Gem::Specification.new do |gem|
 
   gem.rubyforge_project = 'mqtt'
 
-  gem.files         = %w(README LICENSE NEWS) + Dir.glob('lib/**/*.rb')
+
+  gem.files         = `git ls-files -z`.split("\x0")
   gem.test_files    = Dir.glob('spec/*_spec.rb')
   gem.executables   = %w()
   gem.require_paths = %w(lib)
