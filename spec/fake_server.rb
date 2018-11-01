@@ -26,7 +26,8 @@ class MQTT::FakeServer
   attr_reader :last_publish
   attr_reader :thread
   attr_reader :pings_received
-  attr_accessor :just_one
+  attr_accessor :respond_to_pings
+  attr_accessor :just_one_connection
   attr_accessor :logger
 
   # Create a new fake MQTT server
@@ -36,6 +37,9 @@ class MQTT::FakeServer
   def initialize(port=nil, bind_address='127.0.0.1')
     @port = port
     @address = bind_address
+    @pings_received = 0
+    @just_one_connection = false
+    @respond_to_pings = true
   end
 
   # Get the logger used by the server
@@ -49,13 +53,14 @@ class MQTT::FakeServer
     @address = @socket.addr[3]
     @port = @socket.addr[1]
     @thread ||= Thread.new do
+      Thread.current.abort_on_exception = true
       logger.info "Started a fake MQTT server on #{@address}:#{@port}"
       loop do
         # Wait for a client to connect
         client = @socket.accept
         @pings_received = 0
         handle_client(client)
-        break if just_one
+        break if just_one_connection
       end
     end
   end
@@ -95,10 +100,15 @@ class MQTT::FakeServer
         when MQTT::Packet::Publish
           client.write packet
           @last_publish = packet
+
+          if packet.qos > 0
+            puback = MQTT::Packet::Puback.new(:id => packet.id)
+            client.write puback
+          end
         when MQTT::Packet::Subscribe
           client.write MQTT::Packet::Suback.new(
-            :message_id => packet.message_id,
-            :granted_qos => 0
+            :id => packet.id,
+            :return_codes => 0
           )
           topic = packet.topics[0][0]
           client.write MQTT::Packet::Publish.new(
@@ -107,8 +117,10 @@ class MQTT::FakeServer
             :retain => true
           )
         when MQTT::Packet::Pingreq
-          client.write MQTT::Packet::Pingresp.new
           @pings_received += 1
+          if respond_to_pings
+            client.write MQTT::Packet::Pingresp.new
+          end
         when MQTT::Packet::Disconnect
           client.close
         break

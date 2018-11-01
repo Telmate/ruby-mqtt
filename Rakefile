@@ -1,6 +1,6 @@
 #!/usr/bin/env ruby
 
-$:.push File.expand_path("../lib", __FILE__)
+$:.push File.expand_path("./lib", __FILE__)
 
 require 'rubygems'
 require 'yard'
@@ -25,5 +25,6 @@ namespace :doc do
   end
 end
 
+task :test => :spec
 task :specs => :spec
 task :default => :spec

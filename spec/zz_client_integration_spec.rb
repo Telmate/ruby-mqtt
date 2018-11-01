@@ -9,7 +9,8 @@ describe "a client talking to a server" do
   before(:each) do
     @error_log = StringIO.new
     @server = MQTT::FakeServer.new
-    @server.just_one = true
+    @server.just_one_connection = true
+    @server.respond_to_pings = true
     @server.logger = Logger.new(@error_log)
     @server.logger.level = Logger::WARN
     @server.start
@@ -23,31 +24,42 @@ describe "a client talking to a server" do
   end
 
   context "connecting and publishing a packet" do
-    def connect_and_publish
+    def connect_and_publish(options = {})
       @client.connect
-      @client.publish('test', 'foobar')
+
+      retain = options.fetch(:retain) { false }
+      qos = options.fetch(:qos) { 0 }
+
+      @client.publish('test', 'foobar', retain, qos)
       @client.disconnect
       @server.thread.join(1)
     end
 
     it "the server should have received a packet" do
       connect_and_publish
-      @server.last_publish.should_not be_nil
+      expect(@server.last_publish).not_to be_nil
     end
 
     it "the server should have received the correct topic" do
       connect_and_publish
-      @server.last_publish.topic.should == 'test'
+      expect(@server.last_publish.topic).to eq('test')
     end
 
     it "the server should have received the correct payload" do
       connect_and_publish
-      @server.last_publish.payload.should == 'foobar'
+      expect(@server.last_publish.payload).to eq('foobar')
     end
 
     it "the server should not report any errors" do
       connect_and_publish
-      @error_log.string.should be_empty
+      expect(@error_log.string).to be_empty
+    end
+
+    context "with qos > 0" do
+      it "the server should have received a packet without timeout" do
+        connect_and_publish(:qos => 1)
+        expect(@server.last_publish).not_to be_nil
+      end
     end
   end
 
@@ -61,17 +73,17 @@ describe "a client talking to a server" do
 
     it "the client should have received the right topic name" do
       connect_and_subscribe
-      @topic.should == 'test'
+      expect(@topic).to eq('test')
     end
 
     it "the client should have received the right message" do
       connect_and_subscribe
-      @message.should == 'hello test'
+      expect(@message).to eq('hello test')
     end
 
     it "the server should not report any errors" do
       connect_and_subscribe
-      @error_log.string.should be_empty
+      expect(@error_log.string).to be_empty
     end
   end
 
@@ -85,27 +97,27 @@ describe "a client talking to a server" do
 
     it "the client should have received a packet" do
       connect_and_subscribe
-      @packet.should_not be_nil
+      expect(@packet).not_to be_nil
     end
 
     it "the client should have received the correct topic" do
       connect_and_subscribe
-      @packet.topic.should == 'test'
+      expect(@packet.topic).to eq('test')
     end
 
     it "the client should have received the correct payload" do
       connect_and_subscribe
-      @packet.payload.should == 'hello test'
+      expect(@packet.payload).to eq('hello test')
     end
 
     it "the client should have received a retained packet" do
       connect_and_subscribe
-      @packet.retain.should be_true
+      expect(@packet.retain).to be_truthy
     end
 
     it "the server should not report any errors" do
       connect_and_subscribe
-      @error_log.string.should be_empty
+      expect(@error_log.string).to be_empty
     end
   end
 
@@ -120,24 +132,44 @@ describe "a client talking to a server" do
     context "when keep-alive=1" do
       it "the server should have received at least one ping" do
         connect_and_ping(1)
-        @server.pings_received.should >= 1
+        expect(@server.pings_received).to be >= 1
       end
 
       it "the server should not report any errors" do
         connect_and_ping(1)
-        @error_log.string.should be_empty
+        expect(@error_log.string).to be_empty
       end
     end
 
     context "when keep-alive=0" do
       it "the server should not receive any pings" do
         connect_and_ping(0)
-        @server.pings_received.should == 0
+        expect(@server.pings_received).to eq(0)
       end
 
       it "the server should not report any errors" do
         connect_and_ping(0)
-        @error_log.string.should be_empty
+        expect(@error_log.string).to be_empty
+      end
+    end
+  end
+
+  context "detects server not sending ping responses" do
+    def connect_and_timeout(keep_alive)
+      @server.respond_to_pings = false
+      @client.keep_alive = keep_alive
+      @client.connect
+      sleep(keep_alive * 3)
+    end
+
+    context "when keep-alive=1" do
+      it "the server should have received at least one ping" do
+        expect {
+          connect_and_timeout(1)
+        }.to raise_error(
+          MQTT::ProtocolException,
+          'No Ping Response received for 2 seconds'
+        )
       end
     end
   end
